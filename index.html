@@ -85,6 +85,10 @@
                     <span class="text-xs font-medium bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-full tracking-wide">CUT 分析</span>
                 </h1>
                 <p class="text-sm text-slate-400 mt-2">目前登入身分：<span id="display-user-email" class="text-indigo-300 font-medium"></span></p>
+                <p class="text-sm text-slate-400 mt-1 flex items-center gap-1.5">
+                    <i data-lucide="refresh-cw" id="sync-icon" class="w-3.5 h-3.5"></i>
+                    數據狀態：<span id="sync-status" class="font-medium text-slate-300">等待連線...</span>
+                </p>
             </div>
             <div class="flex items-center gap-3 w-full md:w-auto">
                 <select id="sessionSelect" class="custom-select bg-slate-700/80 text-slate-200 border border-slate-600 px-4 py-2.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-full md:w-auto">
@@ -165,7 +169,6 @@
     </div>
 
     <script type="module">
-        // 載入 Firebase 官方模組
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         
@@ -192,6 +195,8 @@
         const loginError = document.getElementById('login-error');
         const select = document.getElementById('sessionSelect');
         const displayUserEmail = document.getElementById('display-user-email');
+        const syncStatus = document.getElementById('sync-status');
+        const syncIcon = document.getElementById('sync-icon');
 
         // 全域變數
         let trendChartInstance = null;
@@ -199,13 +204,12 @@
         let currentTotalSales = 0;
         
         let currentIdToken = null; 
-        let currentUserEmail = ""; // 存放當前登入者的信箱
-        let lastDataString = "";   // 存放防閃爍的快取資料
+        let currentUserEmail = ""; 
+        let lastDataString = "";   
         let realtimeInterval = null; 
 
         // ========== 登入與權限管理 ==========
         
-        // 登入按鈕事件
         loginBtn.addEventListener('click', async () => {
             const email = emailInput.value;
             const password = passwordInput.value;
@@ -218,15 +222,12 @@
             }
         });
 
-        // 登出按鈕事件
         logoutBtn.addEventListener('click', () => {
             signOut(auth);
         });
 
-        // 監聽登入狀態改變
         onAuthStateChanged(auth, async (user) => {
             if (user) {
-                // 已登入：取得 Token 記錄信箱、隱藏登入牆、開始每 3 秒撈資料
                 currentIdToken = await user.getIdToken();
                 currentUserEmail = user.email;
                 displayUserEmail.innerText = currentUserEmail;
@@ -238,7 +239,6 @@
                 fetchRealtimeData();
                 realtimeInterval = setInterval(fetchRealtimeData, 3000);
             } else {
-                // 未登入：清空信箱、停止撈資料、顯示登入牆
                 currentIdToken = null;
                 currentUserEmail = "";
                 lastDataString = "";
@@ -253,19 +253,32 @@
             }
         });
 
-// ========== 資料擷取與【動態資料庫權限機制】 ==========
+        // ========== 資料擷取與【動態資料庫權限機制】 ==========
         async function fetchRealtimeData() {
             if (!currentIdToken) return;
             
             try {
-                // 1. 先去資料庫抓最新的數據
+                syncStatus.innerText = "正在向雲端請求數據...";
+                syncStatus.className = "font-medium text-amber-400";
+                syncIcon.classList.add('animate-spin');
+
                 const dataResponse = await fetch(`${firebaseConfig.databaseURL}/fansign_data.json?auth=${currentIdToken}&t=${new Date().getTime()}`);
                 if (!dataResponse.ok) throw new Error("權限不足或連線失敗");
                 
                 const rawData = await dataResponse.text();
                 
-                // 防閃爍：資料沒變就不更新畫面
-                if (rawData === lastDataString) return;
+                const now = new Date();
+                const timeStr = now.getHours().toString().padStart(2, '0') + ':' + 
+                                now.getMinutes().toString().padStart(2, '0') + ':' + 
+                                now.getSeconds().toString().padStart(2, '0');
+                
+                if (rawData === lastDataString) {
+                    syncStatus.innerText = `已同步 (無新數據) - 最後檢查於 ${timeStr}`;
+                    syncStatus.className = "font-medium text-slate-300";
+                    syncIcon.classList.remove('animate-spin');
+                    return;
+                }
+                
                 lastDataString = rawData; 
                 const dataSets = JSON.parse(rawData);
                 
@@ -273,37 +286,31 @@
                     const currentSelection = select.value;
                     const rawKeys = Object.keys(dataSets);
                     
-                    // 2. 【核心升級】去資料庫抓取你在 Firebase 後台設定的「權限表」
                     const permResponse = await fetch(`${firebaseConfig.databaseURL}/permissions.json?auth=${currentIdToken}&t=${new Date().getTime()}`);
                     const permissionsDB = await permResponse.json() || {};
                     
-                    // 把登入者的信箱 (例如 user@test.com) 轉換成資料庫格式 (user@test_com)
                     const safeEmail = currentUserEmail.replace(/\./g, '_');
-                    
-                    // 從資料庫取得該使用者的權限設定
                     const userPermissionString = permissionsDB[safeEmail]; 
                     
-                    // 3. 執行權限過濾
                     const allowedKeys = rawKeys.filter(key => {
-                        if (!userPermissionString) return false; // 找不到權限設定 = 拒絕
-                        if (userPermissionString === "all") return true; // all = 全部允許
-                        
-                        // 把你在 Firebase 寫的 "idntt,NMIXX" 切割成陣列來比對
+                        if (!userPermissionString) return false; 
+                        if (userPermissionString === "all") return true; 
                         const allowedKeywords = userPermissionString.split(',').map(k => k.trim().toLowerCase());
                         return allowedKeywords.some(keyword => key.toLowerCase().includes(keyword));
                     });
                     
                     select.innerHTML = '';
 
-                    // 檢查過濾後是否有資料
                     if (allowedKeys.length === 0) {
                         select.innerHTML = '<option value="">⛔ 您沒有任何專案的瀏覽權限</option>';
                         document.getElementById('top-changes-table').innerHTML = '';
-                        resetDashboardEmpty(); // 清空圖表
+                        resetDashboardEmpty(); 
+                        syncStatus.innerText = `無瀏覽權限 - ${timeStr}`;
+                        syncStatus.className = "font-medium text-rose-400";
+                        syncIcon.classList.remove('animate-spin');
                         return;
                     }
 
-                    // 將允許的專案加入選單
                     allowedKeys.forEach((key) => {
                         const opt = document.createElement('option');
                         opt.value = key;
@@ -311,7 +318,6 @@
                         select.appendChild(opt);
                     });
 
-                    // 維持使用者先前的選擇，否則跳到最新的專案
                     if (currentSelection && allowedKeys.includes(currentSelection)) {
                         select.value = currentSelection;
                         renderDashboard(parseCSV(dataSets[currentSelection]));
@@ -320,11 +326,27 @@
                         select.value = lastKey;
                         renderDashboard(parseCSV(dataSets[lastKey]));
                     }
+
+                    syncStatus.innerText = `已同步 (有新數據) - 更新於 ${timeStr}`;
+                    syncStatus.className = "font-medium text-emerald-400";
+                    syncIcon.classList.remove('animate-spin');
                 }
             } catch (error) {
                 console.error("即時同步失敗:", error);
+                syncStatus.innerText = `同步失敗，請檢查網路 (${new Date().toLocaleTimeString()})`;
+                syncStatus.className = "font-medium text-rose-500";
+                syncIcon.classList.remove('animate-spin');
             }
         }
+
+        select.addEventListener('change', (e) => {
+            const key = e.target.value;
+            if (!key) return;
+            const dataSets = JSON.parse(lastDataString); 
+            if (dataSets && dataSets[key]) {
+                renderDashboard(parseCSV(dataSets[key]));
+            }
+        });
 
         // ========== 儀表板繪製邏輯 ==========
         function parseCSV(csvString) {
