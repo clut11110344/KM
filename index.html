@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>簽售會實時數據監控 (CUT 分析)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+    <script src="https://unpkg.com/lucide@0.344.0"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700&display=swap"
+        rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Noto Sans TC', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            background-attachment: fixed;
+            min-height: 100vh;
+        }
+
+        /* Subtle animated background mesh */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 600px 600px at 20% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 70%),
+                radial-gradient(ellipse 500px 500px at 80% 80%, rgba(16, 185, 129, 0.06) 0%, transparent 70%),
+                radial-gradient(ellipse 400px 400px at 60% 30%, rgba(244, 63, 94, 0.05) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .main-container {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Glass card */
+        .glass-card {
+            background: rgba(30, 41, 59, 0.65);
+            backdrop-filter: blur(16px) saturate(1.4);
+            -webkit-backdrop-filter: blur(16px) saturate(1.4);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            transition: transform 0.3s cubic-bezier(.25, .8, .25, 1), box-shadow 0.3s cubic-bezier(.25, .8, .25, 1);
+        }
+
+        .glass-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        }
+
+        /* KPI animated number */
+        .kpi-number {
+            background: linear-gradient(135deg, #818cf8, #6366f1);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .kpi-number.rose {
+            background: linear-gradient(135deg, #fb7185, #f43f5e);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .kpi-number.emerald {
+            background: linear-gradient(135deg, #34d399, #10b981);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .kpi-number.slate {
+            background: linear-gradient(135deg, #94a3b8, #cbd5e1);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Fade-in-up animation */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-in {
+            animation: fadeInUp 0.6s cubic-bezier(.25, .8, .25, 1) both;
+        }
+
+        .delay-1 {
+            animation-delay: 0.08s;
+        }
+
+        .delay-2 {
+            animation-delay: 0.16s;
+        }
+
+        .delay-3 {
+            animation-delay: 0.24s;
+        }
+
+        .delay-4 {
+            animation-delay: 0.32s;
+        }
+
+        .delay-5 {
+            animation-delay: 0.40s;
+        }
+
+        .delay-6 {
+            animation-delay: 0.48s;
+        }
+
+        .delay-7 {
+            animation-delay: 0.56s;
+        }
+
+        /* Pulse glow for extreme rows */
+        @keyframes pulseGlow {
+
+            0%,
+            100% {
+                background-color: rgba(244, 63, 94, 0.08);
+            }
+
+            50% {
+                background-color: rgba(244, 63, 94, 0.18);
+            }
+        }
+
+        .extreme-row {
+            animation: pulseGlow 2s ease-in-out infinite;
+        }
+
+        /* Competition intensity bar */
+        .intensity-bar {
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(148, 163, 184, 0.2);
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .intensity-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.8s cubic-bezier(.25, .8, .25, 1), background 0.5s ease;
+        }
+
+        /* Custom select */
+        .custom-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.3);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.4);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.6);
+        }
+
+        /* Table row hover */
+        .table-row {
+            transition: background-color 0.2s ease;
+        }
+
+        .table-row:hover {
+            background-color: rgba(99, 102, 241, 0.1) !important;
+        }
+    </style>
+</head>
+
+<body class="text-slate-300 p-4 md:p-8">
+
+    <div class="main-container max-w-7xl mx-auto space-y-6">
+
+        <!-- Header -->
+        <header
+            class="glass-card flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 rounded-2xl animate-in">
+            <div>
+                <h1 class="text-2xl font-extrabold text-white flex items-center gap-3">
+                    <span class="bg-indigo-500/20 p-2 rounded-xl">
+                        <i data-lucide="line-chart" class="text-indigo-400 w-6 h-6"></i>
+                    </span>
+                    簽售會實時數據監控
+                    <span
+                        class="text-xs font-medium bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-full tracking-wide">CUT
+                        分析</span>
+                </h1>
+                <p class="text-sm text-slate-400 mt-2">追蹤往期/實時總銷量與異常大單，輔助推算安全應募本數</p>
+            </div>
+            <div class="flex items-center gap-3 w-full md:w-auto">
+                <!-- Session Switcher -->
+                <select id="sessionSelect"
+                    class="custom-select bg-slate-700/80 text-slate-200 border border-slate-600 px-4 py-2.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all w-full md:w-auto">
+                    <option value="">⌛ 正在載入資料...</option>
+                </select>
+                <label for="csvUpload"
+                    class="cursor-pointer bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center gap-2 whitespace-nowrap shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40">
+                    <i data-lucide="upload" class="w-4 h-4"></i>
+                    上傳 CSV
+                </label>
+                <input type="file" id="csvUpload" accept=".csv" class="hidden">
+            </div>
+        </header>
+
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="glass-card p-6 rounded-2xl animate-in delay-1">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="bg-indigo-500/20 p-1.5 rounded-lg"><i data-lucide="trending-up"
+                            class="w-4 h-4 text-indigo-400"></i></span>
+                    <span class="text-sm font-medium text-slate-400">目前總銷量</span>
+                </div>
+                <div class="text-3xl font-extrabold kpi-number" id="kpi-total-sales">--</div>
+                <div class="text-xs text-slate-500 mt-3 flex items-center gap-1">
+                    <i data-lucide="clock" class="w-3 h-3"></i> 最後更新: <span id="kpi-last-time">--</span>
+                </div>
+            </div>
+            <div class="glass-card p-6 rounded-2xl animate-in delay-2">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="bg-rose-500/20 p-1.5 rounded-lg"><i data-lucide="alert-triangle"
+                            class="w-4 h-4 text-rose-400"></i></span>
+                    <span class="text-sm font-medium text-slate-400">單筆最大暴增</span>
+                </div>
+                <div class="text-3xl font-extrabold kpi-number rose" id="kpi-max-change">--</div>
+                <div class="text-xs text-slate-500 mt-3 flex items-center gap-1">
+                    <i data-lucide="alert-circle" class="w-3 h-3"></i> 發生於: <span id="kpi-max-time">--</span>
+                </div>
+            </div>
+            <div class="glass-card p-6 rounded-2xl animate-in delay-3">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="bg-emerald-500/20 p-1.5 rounded-lg"><i data-lucide="calendar-plus"
+                            class="w-4 h-4 text-emerald-400"></i></span>
+                    <span class="text-sm font-medium text-slate-400">最後一日新增</span>
+                </div>
+                <div class="text-3xl font-extrabold kpi-number emerald" id="kpi-today-change">--</div>
+                <div class="text-xs text-slate-500 mt-3 flex items-center gap-1">
+                    <i data-lucide="calendar" class="w-3 h-3"></i> 計算基準: 紀錄最後一日
+                </div>
+            </div>
+            <div class="glass-card p-6 rounded-2xl animate-in delay-4">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="bg-slate-500/20 p-1.5 rounded-lg"><i data-lucide="database"
+                            class="w-4 h-4 text-slate-400"></i></span>
+                    <span class="text-sm font-medium text-slate-400">總紀錄筆數</span>
+                </div>
+                <div class="text-3xl font-extrabold kpi-number slate" id="kpi-total-records">--</div>
+                <div class="text-xs text-slate-500 mt-3">有效追蹤的異動次數</div>
+            </div>
+        </div>
+
+        <!-- CUT Calculator -->
+        <div class="glass-card p-6 rounded-2xl border-l-4 border-indigo-500 animate-in delay-5">
+            <h2 class="text-lg font-bold text-white mb-5 flex items-center gap-2">
+                <span class="bg-indigo-500/20 p-1.5 rounded-lg"><i data-lucide="calculator"
+                        class="text-indigo-400 w-5 h-5"></i></span>
+                實時 CUT 分級預估計算機
+                <span class="text-xs font-medium text-slate-400 ml-1">簽售 / 觀禮</span>
+            </h2>
+            <div class="flex flex-col gap-6">
+                <!-- Inputs -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-2">🎤 簽售名額 (需高 CUT)</label>
+                        <input type="number" id="input-quota-fansign" placeholder="例如: 30"
+                            class="w-full px-4 py-3 bg-slate-700/50 border border-slate-600 text-white rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder-slate-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-400 mb-2">👀 觀禮名額 (需較低 CUT)</label>
+                        <input type="number" id="input-quota-viewing" placeholder="例如: 70"
+                            class="w-full px-4 py-3 bg-slate-700/50 border border-slate-600 text-white rounded-xl focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition-all placeholder-slate-500">
+                    </div>
+                </div>
+                <!-- Outputs -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Fansign -->
+                    <div class="bg-indigo-500/10 p-5 rounded-xl border border-indigo-500/20">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="text-sm text-indigo-300 font-bold mb-1">🎤 簽售 CUT (推估)</div>
+                                <div class="text-xs text-indigo-400">均標: <span id="calc-avg-fansign">--</span> 張</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xs text-rose-400 font-medium mb-1">安全防禦 (1.3x)</div>
+                                <div class="text-2xl font-extrabold text-rose-400" id="calc-safe-fansign">-- 張</div>
+                            </div>
+                        </div>
+                        <div class="intensity-bar mt-3">
+                            <div class="intensity-bar-fill" id="bar-fansign" style="width: 0%;"></div>
+                        </div>
+                        <div class="text-xs mt-1.5 font-medium" id="intensity-label-fansign" style="color: #94a3b8;">
+                            輸入名額以計算</div>
+                    </div>
+                    <!-- Viewing -->
+                    <div class="bg-teal-500/10 p-5 rounded-xl border border-teal-500/20">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="text-sm text-teal-300 font-bold mb-1">👀 觀禮 CUT (推估)</div>
+                                <div class="text-xs text-teal-400">均標: <span id="calc-avg-viewing">--</span> 張</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-xs text-emerald-400 font-medium mb-1">安全防禦 (1.2x)</div>
+                                <div class="text-2xl font-extrabold text-emerald-400" id="calc-safe-viewing">-- 張</div>
+                            </div>
+                        </div>
+                        <div class="intensity-bar mt-3">
+                            <div class="intensity-bar-fill" id="bar-viewing" style="width: 0%;"></div>
+                        </div>
+                        <div class="text-xs mt-1.5 font-medium" id="intensity-label-viewing" style="color: #94a3b8;">
+                            輸入名額以計算</div>
+                    </div>
+                </div>
+            </div>
+            <div
+                class="mt-4 p-3 bg-amber-500/10 rounded-xl text-xs text-amber-300/80 flex items-start gap-2 border border-amber-500/10">
+                <i data-lucide="info" class="w-4 h-4 shrink-0 mt-0.5 text-amber-400"></i>
+                <p><strong>注意：</strong>此處依循【證據優先】邏輯，將簽售與觀禮視為獨立母體計算均值，給予簽售較高容錯 (1.3x)，觀禮較低容錯 (1.2x)，僅供投單參考。</p>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="glass-card p-6 rounded-2xl animate-in delay-6">
+                <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                    <i data-lucide="trending-up" class="w-5 h-5 text-indigo-400"></i>
+                    累積銷量趨勢
+                    <span class="text-xs font-medium text-slate-500 ml-1">判斷衝刺期</span>
+                </h2>
+                <div class="relative h-72 w-full">
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+            <div class="glass-card p-6 rounded-2xl animate-in delay-7">
+                <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                    <i data-lucide="bar-chart-3" class="w-5 h-5 text-emerald-400"></i>
+                    每日變動量分析
+                    <span class="text-xs font-medium text-slate-500 ml-1">判斷集資/截單日</span>
+                </h2>
+                <div class="relative h-72 w-full">
+                    <canvas id="dailyChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Top Changes Table -->
+        <div class="glass-card p-6 rounded-2xl animate-in delay-7">
+            <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <i data-lucide="flame" class="w-5 h-5 text-rose-400"></i>
+                異常大單追蹤
+                <span class="text-xs font-medium text-slate-500 ml-1">全部</span>
+            </h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-slate-400 text-xs uppercase tracking-wider">
+                            <th class="p-3 pb-4 font-semibold">編號</th>
+                            <th class="p-3 pb-4 font-semibold">記錄時間</th>
+                            <th class="p-3 pb-4 font-semibold text-right">單筆暴增</th>
+                            <th class="p-3 pb-4 font-semibold text-right">佔總銷量 %</th>
+                            <th class="p-3 pb-4 font-semibold text-right">當下總銷量</th>
+                        </tr>
+                    </thead>
+                    <tbody id="top-changes-table" class="text-sm">
+                        <!-- Dynamic -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="text-center text-xs text-slate-600 py-4">
+            資料來源：使用者匯入之 CSV 日誌檔 · Built with Chart.js & Tailwind
+        </footer>
+    </div>
+
+    <script src="dashboard_data.js"></script>
+    <script>
+        // Init Icons
+        lucide.createIcons();
+
+        // ======== DATA SETS ========
+        let dataSets = {};
+        if (typeof dynamicCSVData !== 'undefined') {
+            dataSets = dynamicCSVData;
+        } else {
+            console.warn("未偵測到 dynamicCSVData，請確認 1/dashboard_data.js 是否存在");
+            // 備用資料以防萬一
+            dataSets = { "無資料": "序號,記錄時間,目前總銷量,單筆變動張數\n1,2026-02-11 00:00:00,0,0" };
+        }
+
+        let customCsv = null;
+
+        // ======== GLOBALS ========
+        let trendChartInstance = null;
+        let dailyChartInstance = null;
+
+        // ======== CSV PARSER ========
+        function parseCSV(csvString) {
+            const lines = csvString.split('\n');
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+                const parts = line.split(',');
+                if (parts.length >= 4) {
+                    const change = parseInt(parts[3]);
+                    if (isNaN(change)) continue;
+                    data.push({
+                        id: parseInt(parts[0]),
+                        time: new Date(parts[1]),
+                        timeStr: parts[1].trim(),
+                        total: parseInt(parts[2]),
+                        change: change
+                    });
+                }
+            }
+            return data.sort((a, b) => a.time - b.time);
+        }
+
+        // ======== RENDER ENGINE ========
+        function renderDashboard(data) {
+            if (data.length === 0) return;
+
+            const lastRecord = data[data.length - 1];
+            const maxChangeRecord = [...data].sort((a, b) => b.change - a.change)[0];
+
+            const lastDateString = lastRecord.timeStr.split(' ')[0];
+            const todayChange = data
+                .filter(d => d.timeStr.startsWith(lastDateString))
+                .reduce((sum, d) => sum + d.change, 0);
+
+            // Animate KPIs
+            animateValue('kpi-total-sales', lastRecord.total);
+            document.getElementById('kpi-last-time').innerText = lastRecord.timeStr;
+            animateValue('kpi-max-change', maxChangeRecord.change, '+');
+            document.getElementById('kpi-max-time').innerText = maxChangeRecord.timeStr;
+            animateValue('kpi-today-change', todayChange, '+');
+            animateValue('kpi-total-records', data.length);
+
+            window.currentTotalSales = lastRecord.total;
+            if (typeof calculateCut === 'function') calculateCut();
+
+            // Chart data
+            const trendLabels = data.map(d => {
+                const t = d.time;
+                return `${t.getMonth() + 1}/${t.getDate()} ${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}`;
+            });
+            const trendData = data.map(d => d.total);
+
+            const dailyDataMap = {};
+            data.forEach(d => {
+                const date = d.timeStr.split(' ')[0].substring(5);
+                dailyDataMap[date] = (dailyDataMap[date] || 0) + d.change;
+            });
+
+            updateCharts(trendLabels, trendData, Object.keys(dailyDataMap), Object.values(dailyDataMap));
+
+            // All abnormal large orders
+            const totalSales = lastRecord.total;
+            const topChanges = [...data].sort((a, b) => b.change - a.change);
+            const fragment = document.createDocumentFragment();
+
+            topChanges.forEach((d, index) => {
+                const isExtreme = d.change > 200;
+                const pct = ((d.change / totalSales) * 100).toFixed(1);
+                const row = document.createElement('tr');
+                row.className = `table-row border-b border-slate-700/50 ${isExtreme ? 'extreme-row' : (index % 2 === 0 ? 'bg-slate-800/20' : '')}`;
+                row.innerHTML = `
+                    <td class="p-3 text-slate-500 font-medium">${index + 1}</td>
+                    <td class="p-3 text-slate-300 font-medium">
+                        ${d.timeStr}
+                        ${isExtreme ? '<span class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">⚠ 警示</span>' : ''}
+                    </td>
+                    <td class="p-3 text-right font-bold ${isExtreme ? 'text-rose-400' : 'text-indigo-400'}">+${d.change.toLocaleString()}</td>
+                    <td class="p-3 text-right text-slate-400 font-medium">${pct}%</td>
+                    <td class="p-3 text-right text-slate-400">${d.total.toLocaleString()}</td>
+                `;
+                fragment.appendChild(row);
+            });
+
+            const tableBody = document.getElementById('top-changes-table');
+            tableBody.innerHTML = '';
+            tableBody.appendChild(fragment);
+        }
+
+        // ======== ANIMATED COUNTER ========
+        function animateValue(elementId, endVal, prefix = '') {
+            const el = document.getElementById(elementId);
+            const duration = 800;
+            const start = performance.now();
+            const startVal = 0;
+
+            function update(now) {
+                const elapsed = now - start;
+                const progress = Math.min(elapsed / duration, 1);
+                // Ease out quart
+                const eased = 1 - Math.pow(1 - progress, 4);
+                const current = Math.round(startVal + (endVal - startVal) * eased);
+                el.innerText = prefix + current.toLocaleString();
+                if (progress < 1) requestAnimationFrame(update);
+            }
+            requestAnimationFrame(update);
+        }
+
+        // ======== CHARTS ========
+        function updateCharts(trendLabels, trendData, dailyLabels, dailyData) {
+            const ctxTrend = document.getElementById('trendChart').getContext('2d');
+            if (trendChartInstance) trendChartInstance.destroy();
+
+            // Gradient fill
+            const gradientTrend = ctxTrend.createLinearGradient(0, 0, 0, 280);
+            gradientTrend.addColorStop(0, 'rgba(99, 102, 241, 0.35)');
+            gradientTrend.addColorStop(0.5, 'rgba(99, 102, 241, 0.1)');
+            gradientTrend.addColorStop(1, 'rgba(99, 102, 241, 0)');
+
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 1200, easing: 'easeOutQuart' },
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                        titleColor: '#e2e8f0',
+                        bodyColor: '#cbd5e1',
+                        borderColor: 'rgba(99, 102, 241, 0.3)',
+                        borderWidth: 1,
+                        cornerRadius: 10,
+                        padding: 12,
+                        titleFont: { weight: '600' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(148, 163, 184, 0.08)', borderDash: [3, 6] },
+                        ticks: { color: '#64748b', font: { size: 11 } }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 11 } }
+                    }
+                }
+            };
+
+            trendChartInstance = new Chart(ctxTrend, {
+                type: 'line',
+                data: {
+                    labels: trendLabels,
+                    datasets: [{
+                        label: '累積總銷量',
+                        data: trendData,
+                        borderColor: '#818cf8',
+                        backgroundColor: gradientTrend,
+                        borderWidth: 2.5,
+                        pointRadius: 0,
+                        pointHoverRadius: 5,
+                        pointHoverBackgroundColor: '#818cf8',
+                        pointHoverBorderColor: '#fff',
+                        pointHoverBorderWidth: 2,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Bar chart
+            const ctxDaily = document.getElementById('dailyChart').getContext('2d');
+            if (dailyChartInstance) dailyChartInstance.destroy();
+
+            const gradientBar = ctxDaily.createLinearGradient(0, 0, 0, 280);
+            gradientBar.addColorStop(0, '#34d399');
+            gradientBar.addColorStop(1, '#059669');
+
+            dailyChartInstance = new Chart(ctxDaily, {
+                type: 'bar',
+                data: {
+                    labels: dailyLabels,
+                    datasets: [{
+                        label: '單日增加張數',
+                        data: dailyData,
+                        backgroundColor: gradientBar,
+                        hoverBackgroundColor: '#6ee7b7',
+                        borderRadius: 6,
+                        borderSkipped: false
+                    }]
+                },
+                options: {
+                    ...chartOptions,
+                    plugins: {
+                        ...chartOptions.plugins,
+                        tooltip: {
+                            ...chartOptions.plugins.tooltip,
+                            callbacks: {
+                                afterLabel: function (ctx) {
+                                    const total = dailyData.reduce((s, v) => s + v, 0);
+                                    return `佔全期 ${((ctx.raw / total) * 100).toFixed(1)}%`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ======== CUT CALCULATOR ========
+        function calculateCut() {
+            const quotaFansign = parseInt(document.getElementById('input-quota-fansign').value);
+            const quotaViewing = parseInt(document.getElementById('input-quota-viewing').value);
+            const totalSales = window.currentTotalSales || 0;
+
+            // Fansign
+            const barF = document.getElementById('bar-fansign');
+            const labelF = document.getElementById('intensity-label-fansign');
+            if (quotaFansign && quotaFansign > 0 && totalSales > 0) {
+                const avg = Math.ceil(totalSales / quotaFansign);
+                const safe = Math.ceil(avg * 1.3);
+                document.getElementById('calc-avg-fansign').innerText = avg.toLocaleString();
+                document.getElementById('calc-safe-fansign').innerText = safe.toLocaleString() + ' 張';
+                const ratio = totalSales / quotaFansign;
+                updateIntensity(barF, labelF, ratio);
+            } else {
+                document.getElementById('calc-avg-fansign').innerText = '--';
+                document.getElementById('calc-safe-fansign').innerText = '-- 張';
+                barF.style.width = '0%';
+                labelF.innerText = '輸入名額以計算';
+                labelF.style.color = '#94a3b8';
+            }
+
+            // Viewing
+            const barV = document.getElementById('bar-viewing');
+            const labelV = document.getElementById('intensity-label-viewing');
+            if (quotaViewing && quotaViewing > 0 && totalSales > 0) {
+                const avg = Math.ceil(totalSales / quotaViewing);
+                const safe = Math.ceil(avg * 1.2);
+                document.getElementById('calc-avg-viewing').innerText = avg.toLocaleString();
+                document.getElementById('calc-safe-viewing').innerText = safe.toLocaleString() + ' 張';
+                const ratio = totalSales / quotaViewing;
+                updateIntensity(barV, labelV, ratio);
+            } else {
+                document.getElementById('calc-avg-viewing').innerText = '--';
+                document.getElementById('calc-safe-viewing').innerText = '-- 張';
+                barV.style.width = '0%';
+                labelV.innerText = '輸入名額以計算';
+                labelV.style.color = '#94a3b8';
+            }
+        }
+
+        function updateIntensity(barEl, labelEl, ratio) {
+            let pct, color, text;
+            if (ratio < 20) { pct = 20; color = '#34d399'; text = '🟢 低競爭'; }
+            else if (ratio < 60) { pct = 45; color = '#fbbf24'; text = '🟡 中等競爭'; }
+            else if (ratio < 120) { pct = 70; color = '#f97316'; text = '🟠 高競爭'; }
+            else { pct = 95; color = '#ef4444'; text = '🔴 極高競爭'; }
+            barEl.style.width = pct + '%';
+            barEl.style.background = `linear-gradient(90deg, ${color}, ${color}dd)`;
+            labelEl.innerText = text + ` (${Math.round(ratio)}:1)`;
+            labelEl.style.color = color;
+        }
+
+        // ======== INITIALIZATION ========
+        document.addEventListener('DOMContentLoaded', () => {
+            const select = document.getElementById('sessionSelect');
+            select.innerHTML = '';
+
+            const keys = Object.keys(dataSets);
+            if (keys.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = "";
+                opt.innerText = "❌ 找不到 CSV 資料";
+                select.appendChild(opt);
+                return;
+            }
+
+            // 填充選單
+            keys.forEach((key, index) => {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.innerText = `📊 ${key}`;
+                if (index === keys.length - 1) opt.selected = true; // 預設選最後一個 (最新的)
+                select.appendChild(opt);
+            });
+
+            // 初始渲染
+            const initialKey = select.value;
+            if (initialKey && dataSets[initialKey]) {
+                const data = parseCSV(dataSets[initialKey]);
+                renderDashboard(data);
+            }
+
+            // 事件監聽
+            select.addEventListener('change', (e) => {
+                const key = e.target.value;
+                if (dataSets[key]) {
+                    const data = parseCSV(dataSets[key]);
+                    renderDashboard(data);
+                }
+            });
+
+            // CSV Upload
+            document.getElementById('csvUpload').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    customCsv = event.target.result;
+                    let opt = select.querySelector('option[value="custom"]');
+                    if (!opt) {
+                        opt = document.createElement('option');
+                        opt.value = 'custom';
+                        opt.textContent = '📁 自訂匯入';
+                        select.appendChild(opt);
+                    }
+                    select.value = 'custom';
+                    renderDashboard(parseCSV(customCsv));
+                };
+                reader.readAsText(file);
+            });
+
+            // CUT CALC LISTENERS
+            document.getElementById('input-quota-fansign').addEventListener('input', calculateCut);
+            document.getElementById('input-quota-viewing').addEventListener('input', calculateCut);
+        });
+    </script>
+</body>
+
+</html>
