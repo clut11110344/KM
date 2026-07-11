@@ -253,39 +253,44 @@
             }
         });
 
-        // ========== 資料擷取與【權限過濾機制】 ==========
+// ========== 資料擷取與【動態資料庫權限機制】 ==========
         async function fetchRealtimeData() {
             if (!currentIdToken) return;
             
             try {
-                const response = await fetch(`${firebaseConfig.databaseURL}/fansign_data.json?auth=${currentIdToken}&t=${new Date().getTime()}`);
-                if (!response.ok) throw new Error("權限不足或連線失敗");
+                // 1. 先去資料庫抓最新的數據
+                const dataResponse = await fetch(`${firebaseConfig.databaseURL}/fansign_data.json?auth=${currentIdToken}&t=${new Date().getTime()}`);
+                if (!dataResponse.ok) throw new Error("權限不足或連線失敗");
                 
-                const rawData = await response.text();
+                const rawData = await dataResponse.text();
                 
                 // 防閃爍：資料沒變就不更新畫面
                 if (rawData === lastDataString) return;
                 lastDataString = rawData; 
-
                 const dataSets = JSON.parse(rawData);
                 
                 if (dataSets) {
                     const currentSelection = select.value;
                     const rawKeys = Object.keys(dataSets);
                     
-                    // 💡 【權限設定區】：根據信箱配置可見的活動關鍵字
-                    // 設定檔名包含的字詞 (不分大小寫)，或寫 "all" 看全部
-                    const userPermissions = {
-                        "admin@koreepop.com": "all",               // 可以看到所有專案
-                        "atan@koreepop.com": ["idntt", "NMIXX"],   // 只能看到 idntt 或 NMIXX 的專案
-                        "staff@koreepop.com": ["izna"]             // 只能看 izna 的專案
-                    };
-
-                    // 執行權限過濾
+                    // 2. 【核心升級】去資料庫抓取你在 Firebase 後台設定的「權限表」
+                    const permResponse = await fetch(`${firebaseConfig.databaseURL}/permissions.json?auth=${currentIdToken}&t=${new Date().getTime()}`);
+                    const permissionsDB = await permResponse.json() || {};
+                    
+                    // 把登入者的信箱 (例如 user@test.com) 轉換成資料庫格式 (user@test_com)
+                    const safeEmail = currentUserEmail.replace(/\./g, '_');
+                    
+                    // 從資料庫取得該使用者的權限設定
+                    const userPermissionString = permissionsDB[safeEmail]; 
+                    
+                    // 3. 執行權限過濾
                     const allowedKeys = rawKeys.filter(key => {
-                        const allowed = userPermissions[currentUserEmail] || []; // 預設沒在表裡的信箱就看不到東西
-                        if (allowed === "all") return true;
-                        return allowed.some(keyword => key.toLowerCase().includes(keyword.toLowerCase()));
+                        if (!userPermissionString) return false; // 找不到權限設定 = 拒絕
+                        if (userPermissionString === "all") return true; // all = 全部允許
+                        
+                        // 把你在 Firebase 寫的 "idntt,NMIXX" 切割成陣列來比對
+                        const allowedKeywords = userPermissionString.split(',').map(k => k.trim().toLowerCase());
+                        return allowedKeywords.some(keyword => key.toLowerCase().includes(keyword));
                     });
                     
                     select.innerHTML = '';
@@ -320,17 +325,6 @@
                 console.error("即時同步失敗:", error);
             }
         }
-
-        // 手動切換專案事件 (下拉選單改變時，不需重新發 API，直接用舊資料渲染)
-        select.addEventListener('change', (e) => {
-            const key = e.target.value;
-            if (!key) return;
-            // 直接從 lastDataString 解析出快取的 JSON 來切換畫面，速度更快
-            const dataSets = JSON.parse(lastDataString); 
-            if (dataSets && dataSets[key]) {
-                renderDashboard(parseCSV(dataSets[key]));
-            }
-        });
 
         // ========== 儀表板繪製邏輯 ==========
         function parseCSV(csvString) {
