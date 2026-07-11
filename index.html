@@ -84,6 +84,7 @@
                     簽售會實時數據監控
                     <span class="text-xs font-medium bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-full tracking-wide">CUT 分析</span>
                 </h1>
+                <p class="text-sm text-slate-400 mt-2">目前登入身分：<span id="display-user-email" class="text-indigo-300 font-medium"></span></p>
             </div>
             <div class="flex items-center gap-3 w-full md:w-auto">
                 <select id="sessionSelect" class="custom-select bg-slate-700/80 text-slate-200 border border-slate-600 px-4 py-2.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-full md:w-auto">
@@ -190,15 +191,17 @@
         const passwordInput = document.getElementById('password-input');
         const loginError = document.getElementById('login-error');
         const select = document.getElementById('sessionSelect');
+        const displayUserEmail = document.getElementById('display-user-email');
 
         // 全域變數
         let trendChartInstance = null;
         let dailyChartInstance = null;
         let currentTotalSales = 0;
         
-        let currentIdToken = null; // 存放授權金鑰
+        let currentIdToken = null; 
+        let currentUserEmail = ""; // 存放當前登入者的信箱
         let lastDataString = "";   // 存放防閃爍的快取資料
-        let realtimeInterval = null; // 計時器
+        let realtimeInterval = null; 
 
         // ========== 登入與權限管理 ==========
         
@@ -223,8 +226,11 @@
         // 監聽登入狀態改變
         onAuthStateChanged(auth, async (user) => {
             if (user) {
-                // 已登入：取得 Token、隱藏登入牆、開始每 3 秒撈資料
+                // 已登入：取得 Token 記錄信箱、隱藏登入牆、開始每 3 秒撈資料
                 currentIdToken = await user.getIdToken();
+                currentUserEmail = user.email;
+                displayUserEmail.innerText = currentUserEmail;
+                
                 loginOverlay.classList.add('opacity-0', 'pointer-events-none');
                 setTimeout(() => loginOverlay.classList.add('hidden'), 500);
                 dashboardContent.classList.remove('hidden');
@@ -232,8 +238,9 @@
                 fetchRealtimeData();
                 realtimeInterval = setInterval(fetchRealtimeData, 3000);
             } else {
-                // 未登入：停止撈資料、顯示登入牆
+                // 未登入：清空信箱、停止撈資料、顯示登入牆
                 currentIdToken = null;
+                currentUserEmail = "";
                 lastDataString = "";
                 if(realtimeInterval) clearInterval(realtimeInterval);
                 
@@ -246,18 +253,17 @@
             }
         });
 
-        // ========== 資料擷取 (防閃爍機制) ==========
+        // ========== 資料擷取與【權限過濾機制】 ==========
         async function fetchRealtimeData() {
-            if (!currentIdToken) return; // 沒 Token 就拒絕執行
+            if (!currentIdToken) return;
             
             try {
-                // 在 URL 後方帶上 auth=Token 來通過資料庫規則檢查
                 const response = await fetch(`${firebaseConfig.databaseURL}/fansign_data.json?auth=${currentIdToken}&t=${new Date().getTime()}`);
                 if (!response.ok) throw new Error("權限不足或連線失敗");
                 
                 const rawData = await response.text();
                 
-                // 【防閃爍機制】如果資料跟 3 秒前長得完全一樣，就結束，不要重繪畫面
+                // 防閃爍：資料沒變就不更新畫面
                 if (rawData === lastDataString) return;
                 lastDataString = rawData; 
 
@@ -265,21 +271,47 @@
                 
                 if (dataSets) {
                     const currentSelection = select.value;
-                    const keys = Object.keys(dataSets);
+                    const rawKeys = Object.keys(dataSets);
+                    
+                    // 💡 【權限設定區】：根據信箱配置可見的活動關鍵字
+                    // 設定檔名包含的字詞 (不分大小寫)，或寫 "all" 看全部
+                    const userPermissions = {
+                        "admin@koreepop.com": "all",               // 可以看到所有專案
+                        "atan@koreepop.com": ["idntt", "NMIXX"],   // 只能看到 idntt 或 NMIXX 的專案
+                        "staff@koreepop.com": ["izna"]             // 只能看 izna 的專案
+                    };
+
+                    // 執行權限過濾
+                    const allowedKeys = rawKeys.filter(key => {
+                        const allowed = userPermissions[currentUserEmail] || []; // 預設沒在表裡的信箱就看不到東西
+                        if (allowed === "all") return true;
+                        return allowed.some(keyword => key.toLowerCase().includes(keyword.toLowerCase()));
+                    });
                     
                     select.innerHTML = '';
-                    keys.forEach((key) => {
+
+                    // 檢查過濾後是否有資料
+                    if (allowedKeys.length === 0) {
+                        select.innerHTML = '<option value="">⛔ 您沒有任何專案的瀏覽權限</option>';
+                        document.getElementById('top-changes-table').innerHTML = '';
+                        resetDashboardEmpty(); // 清空圖表
+                        return;
+                    }
+
+                    // 將允許的專案加入選單
+                    allowedKeys.forEach((key) => {
                         const opt = document.createElement('option');
                         opt.value = key;
                         opt.innerText = `📊 ${key}`;
                         select.appendChild(opt);
                     });
 
-                    if (currentSelection && dataSets[currentSelection]) {
+                    // 維持使用者先前的選擇，否則跳到最新的專案
+                    if (currentSelection && allowedKeys.includes(currentSelection)) {
                         select.value = currentSelection;
                         renderDashboard(parseCSV(dataSets[currentSelection]));
-                    } else if (keys.length > 0) {
-                        const lastKey = keys[keys.length - 1];
+                    } else if (allowedKeys.length > 0) {
+                        const lastKey = allowedKeys[allowedKeys.length - 1];
                         select.value = lastKey;
                         renderDashboard(parseCSV(dataSets[lastKey]));
                     }
@@ -289,18 +321,18 @@
             }
         }
 
-        // 手動切換專案事件
-        select.addEventListener('change', async (e) => {
-            if (!currentIdToken) return;
+        // 手動切換專案事件 (下拉選單改變時，不需重新發 API，直接用舊資料渲染)
+        select.addEventListener('change', (e) => {
             const key = e.target.value;
-            const response = await fetch(`${firebaseConfig.databaseURL}/fansign_data.json?auth=${currentIdToken}&t=${new Date().getTime()}`);
-            const dataSets = await response.json();
+            if (!key) return;
+            // 直接從 lastDataString 解析出快取的 JSON 來切換畫面，速度更快
+            const dataSets = JSON.parse(lastDataString); 
             if (dataSets && dataSets[key]) {
                 renderDashboard(parseCSV(dataSets[key]));
             }
         });
 
-        // ========== 儀表板繪製邏輯 (維持不變) ==========
+        // ========== 儀表板繪製邏輯 ==========
         function parseCSV(csvString) {
             const lines = csvString.split('\n');
             const data = [];
@@ -321,6 +353,19 @@
                 }
             }
             return data.sort((a, b) => a.time - b.time);
+        }
+
+        function resetDashboardEmpty() {
+            document.getElementById('kpi-total-sales').innerText = '--';
+            document.getElementById('kpi-last-time').innerText = '--';
+            document.getElementById('kpi-max-change').innerText = '--';
+            document.getElementById('kpi-max-time').innerText = '--';
+            document.getElementById('kpi-today-change').innerText = '--';
+            document.getElementById('kpi-total-records').innerText = '--';
+            if(trendChartInstance) trendChartInstance.destroy();
+            if(dailyChartInstance) dailyChartInstance.destroy();
+            currentTotalSales = 0;
+            calculateCut();
         }
 
         function renderDashboard(data) {
