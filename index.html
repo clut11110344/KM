@@ -78,19 +78,24 @@
 
     <div id="dashboard-content" class="main-container max-w-7xl mx-auto space-y-6 hidden">
         <header class="glass-card flex flex-col md:flex-row justify-between items-start md:items-center gap-4 p-6 rounded-2xl">
-            <div>
+            <div class="flex-1 w-full overflow-hidden">
                 <h1 class="text-2xl font-extrabold text-white flex items-center gap-3">
                     <span class="bg-indigo-500/20 p-2 rounded-xl"><i data-lucide="line-chart" class="text-indigo-400 w-6 h-6"></i></span>
                     簽售會實時數據監控
                     <span class="text-xs font-medium bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-full tracking-wide">CUT 分析</span>
                 </h1>
-                <p class="text-sm text-slate-400 mt-2">目前登入身分：<span id="display-user-email" class="text-indigo-300 font-medium"></span></p>
-                <p class="text-sm text-slate-400 mt-1 flex items-center gap-1.5">
-                    <i data-lucide="refresh-cw" id="sync-icon" class="w-3.5 h-3.5"></i>
-                    數據狀態：<span id="sync-status" class="font-medium text-slate-300">等待連線...</span>
-                </p>
+                
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mt-3">
+                    <p class="text-sm text-slate-400">登入身分：<span id="display-user-email" class="text-indigo-300 font-medium"></span></p>
+                    <div class="hidden sm:block w-px h-4 bg-slate-700"></div>
+                    <div class="flex items-center gap-1.5 w-64">
+                        <i data-lucide="refresh-cw" id="sync-icon" class="w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform"></i>
+                        <span id="sync-status" class="text-xs font-medium text-slate-400 truncate">正在初始化連線...</span>
+                    </div>
+                </div>
             </div>
-            <div class="flex items-center gap-3 w-full md:w-auto">
+            
+            <div class="flex items-center gap-3 w-full md:w-auto shrink-0">
                 <select id="sessionSelect" class="custom-select bg-slate-700/80 text-slate-200 border border-slate-600 px-4 py-2.5 rounded-xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none w-full md:w-auto">
                     <option value="">⌛ 正在連線 Firebase...</option>
                 </select>
@@ -258,9 +263,10 @@
             if (!currentIdToken) return;
             
             try {
+                // 💡 修復 3：UI 顯示請求動畫，給予視覺回饋
                 syncStatus.innerText = "正在向雲端請求數據...";
-                syncStatus.className = "font-medium text-amber-400";
-                syncIcon.classList.add('animate-spin');
+                syncStatus.className = "text-xs font-bold text-amber-400 truncate";
+                syncIcon.classList.add('animate-spin', 'text-amber-400');
 
                 const dataResponse = await fetch(`${firebaseConfig.databaseURL}/fansign_data.json?auth=${currentIdToken}&t=${new Date().getTime()}`);
                 if (!dataResponse.ok) throw new Error("權限不足或連線失敗");
@@ -273,9 +279,9 @@
                                 now.getSeconds().toString().padStart(2, '0');
                 
                 if (rawData === lastDataString) {
-                    syncStatus.innerText = `已同步 (無新數據) - 最後檢查於 ${timeStr}`;
-                    syncStatus.className = "font-medium text-slate-300";
-                    syncIcon.classList.remove('animate-spin');
+                    syncStatus.innerText = `已同步 (無新數據) - 最後更新 ${timeStr}`;
+                    syncStatus.className = "text-xs font-medium text-slate-400 truncate";
+                    syncIcon.classList.remove('animate-spin', 'text-amber-400');
                     return;
                 }
                 
@@ -305,9 +311,9 @@
                         select.innerHTML = '<option value="">⛔ 您沒有任何專案的瀏覽權限</option>';
                         document.getElementById('top-changes-table').innerHTML = '';
                         resetDashboardEmpty(); 
-                        syncStatus.innerText = `無瀏覽權限 - ${timeStr}`;
-                        syncStatus.className = "font-medium text-rose-400";
-                        syncIcon.classList.remove('animate-spin');
+                        syncStatus.innerText = `無權限 - ${timeStr}`;
+                        syncStatus.className = "text-xs font-bold text-rose-400 truncate";
+                        syncIcon.classList.remove('animate-spin', 'text-amber-400');
                         return;
                     }
 
@@ -327,15 +333,16 @@
                         renderDashboard(parseCSV(dataSets[lastKey]));
                     }
 
-                    syncStatus.innerText = `已同步 (有新數據) - 更新於 ${timeStr}`;
-                    syncStatus.className = "font-medium text-emerald-400";
-                    syncIcon.classList.remove('animate-spin');
+                    // UI 恢復已同步狀態
+                    syncStatus.innerText = `已同步 (有新數據) - 最後更新 ${timeStr}`;
+                    syncStatus.className = "text-xs font-bold text-emerald-400 truncate";
+                    syncIcon.classList.remove('animate-spin', 'text-amber-400');
                 }
             } catch (error) {
                 console.error("即時同步失敗:", error);
                 syncStatus.innerText = `同步失敗，請檢查網路 (${new Date().toLocaleTimeString()})`;
-                syncStatus.className = "font-medium text-rose-500";
-                syncIcon.classList.remove('animate-spin');
+                syncStatus.className = "text-xs font-bold text-rose-500 truncate";
+                syncIcon.classList.remove('animate-spin', 'text-amber-400');
             }
         }
 
@@ -348,22 +355,36 @@
             }
         });
 
-        // ========== 儀表板繪製邏輯 ==========
+        // ========== 儀表板繪製邏輯 (💡 修復 1：安全處理 "N/A" 與 NaN 的情況) ==========
         function parseCSV(csvString) {
+            if (!csvString) return [];
             const lines = csvString.split('\n');
             const data = [];
+            let runningTotal = 0; // 用來處理變體 CSV 中的 "N/A"
+            
             for (let i = 1; i < lines.length; i++) {
-                const line = lines[i].trim();
+                const line = lines[i].replace(/\r/g, '').trim();
                 if (!line) continue;
+                
                 const parts = line.split(',');
                 if (parts.length >= 4) {
-                    const change = parseInt(parts[3]);
-                    if (isNaN(change)) continue;
+                    let change = parseInt(parts[3]);
+                    if (isNaN(change)) change = 0;
+                    
+                    let total = parseInt(parts[2]);
+                    if (isNaN(total)) {
+                        // 如果總計寫著 "N/A"，就透過加總變化量來推算總量，讓圖表能正常畫出來
+                        runningTotal += change;
+                        total = runningTotal;
+                    } else {
+                        runningTotal = total;
+                    }
+                    
                     data.push({
-                        id: parseInt(parts[0]),
+                        id: parseInt(parts[0]) || i,
                         time: new Date(parts[1]),
-                        timeStr: parts[1].trim(),
-                        total: parseInt(parts[2]),
+                        timeStr: parts[1] ? parts[1].trim() : '',
+                        total: total,
                         change: change
                     });
                 }
@@ -385,7 +406,11 @@
         }
 
         function renderDashboard(data) {
-            if (data.length === 0) return;
+            if (!data || data.length === 0) {
+                resetDashboardEmpty();
+                return;
+            }
+            
             const lastRecord = data[data.length - 1];
             const maxChangeRecord = [...data].sort((a, b) => b.change - a.change)[0];
             const lastDateString = lastRecord.timeStr.split(' ')[0];
@@ -415,7 +440,7 @@
             const fragment = document.createDocumentFragment();
             topChanges.forEach((d, index) => {
                 const isExtreme = d.change > 200;
-                const pct = ((d.change / lastRecord.total) * 100).toFixed(1);
+                const pct = lastRecord.total > 0 ? ((d.change / lastRecord.total) * 100).toFixed(1) : 0;
                 const row = document.createElement('tr');
                 row.className = `table-row border-b border-slate-700/50 ${isExtreme ? 'extreme-row' : (index % 2 === 0 ? 'bg-slate-800/20' : '')}`;
                 row.innerHTML = `
